@@ -1,0 +1,41 @@
+# Netlify deploy config for js-runtime-lab (Vite SPA).
+# If the production domain differs, update the Sitemap URL in
+# public/robots.txt and VITE_SITE_URL accordingly.
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Asset optimization. Note: Vite already bundles + minifies everything at
+# build time (esbuild), so these post-processing flags are belt-and-braces —
+# they apply only where Netlify still supports them and are ignored otherwise.
+[build.processing]
+  skip_processing = false
+[build.processing.css]
+  bundle = true
+  minify = true
+[build.processing.js]
+  bundle = true
+  minify = true
+[build.processing.html]
+  pretty_urls = true
+[build.processing.images]
+  compress = true
+
+# Client-side routing fallback (BrowserRouter — no hash routing).
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Long-cache hashed build assets (filenames contain content hashes).
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Never cache the app shell — it references the hashed assets above.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"

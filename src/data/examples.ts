@@ -203,8 +203,8 @@ test();
 
 console.log("After error");`,
     description: 'Errors unwind the call stack. Code after the error does not execute.',
-    expectedOutput: ['Before error'],
-    explanation: 'When an error is thrown, the call stack unwinds. "After error" never executes because the error propagates.',
+    expectedOutput: ['Before error', 'Uncaught Error: Something went wrong'],
+    explanation: 'When an error is thrown, the call stack unwinds and the error lands in the console as "Uncaught Error". "After error" never executes because the run stops at the throw.',
   },
   {
     id: 'memory-leak',

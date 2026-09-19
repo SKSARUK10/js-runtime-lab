@@ -17,11 +17,39 @@ import type {
   EventLoopState,
   ProfilerData,
 } from '@/types/runtime';
-import { parseCode, extractStringLiteral, type ParseResult, type ParsedStep } from './parser';
+import { parseCode, extractStringLiteral, type ParseResult, type ParsedStep, type ParsedFunction } from './parser';
 
 let idCounter = 0;
 function uid(prefix: string): string {
   return `${prefix}-${++idCounter}`;
+}
+
+// Module-level parse context for the helper generators below. Set fresh at
+// the top of every generateSimulation() call; generation is fully
+// synchronous so this is never shared across runs.
+let activeSteps: ParsedStep[] = [];
+let activeFunctions = new Map<string, ParsedFunction>();
+
+// Direct-child body steps for any callback owner: excludes the owner
+// itself, trivia, and steps owned by a nested callback (those run when
+// the nested queue drains, never inline with the parent body).
+function getDirectBodySteps(allSteps: ParsedStep[], step: ParsedStep): ParsedStep[] {
+  if (!step.bodyLines) return [];
+  const [start, end] = step.bodyLines;
+  return allSteps.filter(s => {
+    if (s === step) return false;
+    if (s.line < start || s.line > end) return false;
+    if (s.type === 'blank' || s.type === 'comment' || s.type === 'block-end') return false;
+    for (const owner of allSteps) {
+      if (!owner.bodyLines || owner === s || owner === step) continue;
+      const [os, oe] = owner.bodyLines;
+      // Ancestor ranges (containing the queried range) don't own these
+      // steps — only strictly nested callback ranges do.
+      if (os <= start && oe >= end) continue;
+      if (s.line >= os && s.line <= oe) return false;
+    }
+    return true;
+  });
 }
 
 export interface SimStep {
@@ -41,6 +69,9 @@ export function generateSimulation(code: string): { steps: SimStep[]; parseResul
     return { steps: [], parseResult, supported: false };
   }
 
+  activeSteps = parseResult.steps;
+  activeFunctions = parseResult.functions;
+
   const steps: SimStep[] = [];
   const { functions } = parseResult;
 
@@ -48,11 +79,9 @@ export function generateSimulation(code: string): { steps: SimStep[]; parseResul
   const registeredTimers: { id: string; line: number; delay: number; callbackId: string; label: string; isInterval: boolean }[] = [];
   const registeredIntervals: { id: string; line: number; delay: number; callbackId: string; label: string }[] = [];
 
-  // Helper to parse callback body steps
+  // Helper to parse callback body steps (delegates to the shared rule).
   function getCallbackBodySteps(step: ParsedStep): ParsedStep[] {
-    if (!step.bodyLines) return [];
-    const [start, end] = step.bodyLines;
-    return parseResult.steps.filter(s => s.line >= start && s.line <= end && s.type !== 'blank' && s.type !== 'comment' && s.type !== 'block-end');
+    return getDirectBodySteps(parseResult.steps, step);
   }
 
   // Generate steps for executing a function body
@@ -382,6 +411,14 @@ export function generateSimulation(code: string): { steps: SimStep[]; parseResul
     // Only top-level (not inside function bodies)
     for (const [, fn] of functions) {
       if (s.line > fn.startLine && s.line <= fn.endLine) return false;
+    }
+    // Not inside a callback body either: bodies execute only when their
+    // queue drains, never inline during the synchronous pass. (Single-line
+    // callbacks own their own line, so the owner step itself is kept.)
+    for (const owner of parseResult.steps) {
+      if (!owner.bodyLines || owner === s) continue;
+      const [start, end] = owner.bodyLines;
+      if (s.line >= start && s.line <= end) return false;
     }
     return true;
   });
@@ -1182,7 +1219,7 @@ export function generateSimulation(code: string): { steps: SimStep[]; parseResul
   // For tasks queued during microtask execution or timer completion, we handle them too
 
   // Collect all task-generating registrations
-  const allTaskCallbacks: { callbackId: string; callbackSteps: ParsedStep[]; line: number; taskId: string; label: string }[] = [];
+  const allTaskCallbacks: { callbackId: string; callbackSteps: ParsedStep[]; line: number; taskId: string; label: string; delay: number }[] = [];
 
   // For setTimeout callbacks, we need to get the callback body steps
   for (const step of topLevelSteps) {
@@ -1194,9 +1231,14 @@ export function generateSimulation(code: string): { steps: SimStep[]; parseResul
         line: step.line,
         taskId: `task-${step.line}`,
         label: step.type === 'setTimeout' ? 'setTimeout callback' : 'setInterval callback',
+        delay: step.delay || 0,
       });
     }
   }
+
+  // Timers registered in the same synchronous block fire in delay order
+  // (stable: equal delays keep registration FIFO order).
+  allTaskCallbacks.sort((a, b) => a.delay - b.delay);
 
   // Process tasks
   for (const task of allTaskCallbacks) {
@@ -1594,9 +1636,9 @@ function generateBodyStepSteps(
   bodyStep: ParsedStep,
   fn: { name: string; startLine: number; endLine: number; isClosure: boolean } | null,
   isCallback: boolean = false,
+  depth: number = 0,
 ): void {
   void fn;
-  void isCallback;
 
   switch (bodyStep.type) {
     case 'console.log': {
@@ -1929,6 +1971,67 @@ function generateBodyStepSteps(
           });
         },
       });
+
+      // A timer nested inside a running callback fires after its own wait
+      // and its body runs here (consuming its queue entry), so nested
+      // timers execute instead of silently vanishing.
+      if (isCallback) {
+        const nestedBody = getDirectBodySteps(activeSteps, bodyStep);
+        steps.push({
+          description: 'Nested timer callback enters Call Stack',
+          line: bodyStep.line,
+          category: 'task',
+          apply: (snap) => {
+            snap.taskQueue = snap.taskQueue.length > 0 ? snap.taskQueue.slice(1) : snap.taskQueue;
+            snap.callStack = [...snap.callStack, {
+              id: uid('frame'),
+              name: 'setTimeout callback',
+              line: bodyStep.line,
+              type: 'anonymous',
+            }];
+            snap.animations.push({
+              id: uid('anim'),
+              from: 'taskqueue',
+              to: 'callstack',
+              label: 'Nested task → Call Stack',
+              category: 'eventloop-transfer',
+              timestamp: snap.executionTime,
+            });
+            snap.timeline.push({
+              id: uid('tl'),
+              time: snap.executionTime,
+              label: 'Nested timer callback executing',
+              category: 'task',
+              line: bodyStep.line,
+            });
+            snap.profiler.tasksExecuted++;
+            snap.cpuUsage = Math.min(100, snap.cpuUsage + 20);
+          },
+        });
+
+        for (const bs of nestedBody) {
+          generateBodyStepSteps(steps, bs, null, true, depth + 1);
+        }
+
+        steps.push({
+          description: 'Nested timer callback complete',
+          line: bodyStep.line,
+          category: 'task',
+          apply: (snap) => {
+            snap.callStack = snap.callStack.slice(0, -1);
+            snap.animations.push({
+              id: uid('anim'),
+              from: 'callstack',
+              to: 'code',
+              label: 'Nested callback returns',
+              category: 'pop',
+              timestamp: snap.executionTime,
+            });
+            snap.cpuUsage = Math.max(5, snap.cpuUsage - 15);
+            snap.eventLoopState = 'CHECKING';
+          },
+        });
+      }
       break;
     }
 
@@ -2015,7 +2118,67 @@ function generateBodyStepSteps(
     }
 
     case 'function-call':
-    case 'async-function-call':
+    case 'async-function-call': {
+      // A named function called from inside another body: push a frame,
+      // run the callee body inline, then pop. (Depth-guarded for safety.)
+      const callee = bodyStep.fnName ? activeFunctions.get(bodyStep.fnName) : undefined;
+      if (!callee || depth > 8) break;
+      steps.push({
+        description: `Call ${callee.name}()`,
+        line: bodyStep.line,
+        category: 'sync',
+        apply: (snap) => {
+          snap.currentLine = bodyStep.line;
+          snap.callStack = [...snap.callStack, {
+            id: uid('frame'),
+            name: `${callee.name}()`,
+            line: callee.startLine,
+            type: 'function',
+          }];
+          snap.animations.push({
+            id: uid('anim'),
+            from: 'code',
+            to: 'callstack',
+            label: `${callee.name}() called`,
+            category: 'push',
+            timestamp: snap.executionTime,
+          });
+          snap.timeline.push({
+            id: uid('tl'),
+            time: snap.executionTime,
+            label: `${callee.name}() pushed to Call Stack`,
+            category: 'sync',
+            line: bodyStep.line,
+          });
+          snap.cpuUsage = Math.min(100, snap.cpuUsage + 15);
+        },
+      });
+
+      for (const bs of callee.body) {
+        if (bs.type === 'await') break; // nested await: stop at suspension
+        generateBodyStepSteps(steps, bs, callee, isCallback, depth + 1);
+      }
+
+      steps.push({
+        description: `${callee.name}() returns`,
+        line: callee.endLine,
+        category: 'sync',
+        apply: (snap) => {
+          snap.callStack = snap.callStack.slice(0, -1);
+          snap.animations.push({
+            id: uid('anim'),
+            from: 'callstack',
+            to: 'code',
+            label: `${callee.name}() returns`,
+            category: 'pop',
+            timestamp: snap.executionTime,
+          });
+          snap.cpuUsage = Math.max(5, snap.cpuUsage - 10);
+        },
+      });
+      break;
+    }
+
     case 'function-decl':
     case 'async-function-decl':
     case 'queueMicrotask':
@@ -2143,6 +2306,10 @@ export function createInitialSnapshot(): RuntimeSnapshot {
 
 // ===== Apply a step to a snapshot =====
 export function applyStep(snap: RuntimeSnapshot, step: SimStep): RuntimeSnapshot {
+  // Once an uncaught error ends the run, later pre-built steps are dead
+  // code: real JavaScript never executes past an uncaught throw.
+  if (snap.state === 'COMPLETED') return snap;
+
   const newSnap: RuntimeSnapshot = {
     ...snap,
     callStack: [...snap.callStack],

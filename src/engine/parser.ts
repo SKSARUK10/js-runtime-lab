@@ -167,9 +167,6 @@ export function parseCode(code: string): ParseResult {
     // setTimeout(() => { ... }, delay)
     match = line.match(/setTimeout\(\s*\(\)\s*=>\s*\{/);
     if (match) {
-      // find the delay - look for }, delay) pattern
-      const delayMatch = code.slice(0).match(new RegExp(`setTimeout\\(\\s*\\(\\)\\s*=>\\s*\\{[\\s\\S]*?\\},\\s*(\\d+)\\)`));
-      const delay = delayMatch ? parseInt(delayMatch[1]) : 0;
       // Find callback body lines
       let depth = 1;
       let bodyEnd = lineNum;
@@ -181,6 +178,10 @@ export function parseCode(code: string): ParseResult {
         if (depth <= 0) { bodyEnd = j + 1; break; }
         if (depth === 0) { bodyEnd = j + 1; break; }
       }
+      // Delay comes from this timer's own closing line (not a global
+      // search — sibling timers have their own delays).
+      const closeMatch = lines[bodyEnd - 1]?.match(/\},\s*(\d+)\)/);
+      const delay = closeMatch ? parseInt(closeMatch[1]) : 0;
       steps.push({ line: lineNum, type: 'setTimeout', delay, bodyLines: [lineNum + 1, bodyEnd - 1] });
       continue;
     }
@@ -188,8 +189,6 @@ export function parseCode(code: string): ParseResult {
     // setTimeout(function() { ... }, delay)
     match = line.match(/setTimeout\(\s*function\s*\(\)\s*\{/);
     if (match) {
-      const delayMatch = code.match(/setTimeout\(\s*function\s*\(\)\s*\{[\s\S]*?\},\s*(\d+)\)/);
-      const delay = delayMatch ? parseInt(delayMatch[1]) : 0;
       let depth = 1;
       let bodyEnd = lineNum;
       for (let j = i + 1; j < lines.length && depth > 0; j++) {
@@ -199,6 +198,8 @@ export function parseCode(code: string): ParseResult {
         }
         if (depth <= 0) { bodyEnd = j + 1; break; }
       }
+      const closeMatch = lines[bodyEnd - 1]?.match(/\},\s*(\d+)\)/);
+      const delay = closeMatch ? parseInt(closeMatch[1]) : 0;
       steps.push({ line: lineNum, type: 'setTimeout', delay, bodyLines: [lineNum + 1, bodyEnd - 1] });
       continue;
     }
@@ -206,8 +207,6 @@ export function parseCode(code: string): ParseResult {
     // setInterval(() => { ... }, delay)
     match = line.match(/setInterval\(\s*\(\)\s*=>\s*\{/);
     if (match) {
-      const delayMatch = code.match(/setInterval\(\s*\(\)\s*=>\s*\{[\s\S]*?\},\s*(\d+)\)/);
-      const delay = delayMatch ? parseInt(delayMatch[1]) : 0;
       let depth = 1;
       let bodyEnd = lineNum;
       for (let j = i + 1; j < lines.length && depth > 0; j++) {
@@ -217,6 +216,8 @@ export function parseCode(code: string): ParseResult {
         }
         if (depth <= 0) { bodyEnd = j + 1; break; }
       }
+      const closeMatch = lines[bodyEnd - 1]?.match(/\},\s*(\d+)\)/);
+      const delay = closeMatch ? parseInt(closeMatch[1]) : 0;
       steps.push({ line: lineNum, type: 'setInterval', delay, bodyLines: [lineNum + 1, bodyEnd - 1] });
       continue;
     }
@@ -290,6 +291,18 @@ export function parseCode(code: string): ParseResult {
       continue;
     }
 
+    // await Promise.resolve() — must come before the standalone
+    // Promise.resolve() check below (which would match the suffix).
+    match = line.match(/await\s+Promise\.resolve\(\);?$/);
+    if (match) {
+      steps.push({ line: lineNum, type: 'await', parentFn: inFunction || undefined });
+      // Mark function as having await
+      if (inFunction && functions.has(inFunction)) {
+        functions.get(inFunction)!.hasAwait = true;
+      }
+      continue;
+    }
+
     // Promise.resolve() — standalone
     match = line.match(/Promise\.resolve\(\);?$/);
     if (match) {
@@ -342,17 +355,6 @@ export function parseCode(code: string): ParseResult {
     match = line.match(/throw\s+new\s+Error\((.+)\);?$/);
     if (match) {
       steps.push({ line: lineNum, type: 'throw', arg: match[1], parentFn: inFunction || undefined });
-      continue;
-    }
-
-    // await Promise.resolve()
-    match = line.match(/await\s+Promise\.resolve\(\);?$/);
-    if (match) {
-      steps.push({ line: lineNum, type: 'await', parentFn: inFunction || undefined });
-      // Mark function as having await
-      if (inFunction && functions.has(inFunction)) {
-        functions.get(inFunction)!.hasAwait = true;
-      }
       continue;
     }
 
@@ -443,9 +445,20 @@ export function parseCode(code: string): ParseResult {
     steps.push({ line: lineNum, type: 'expression', arg: line, parentFn: inFunction || undefined });
   }
 
-  // Build function bodies
+  // Build function bodies: direct children only — steps owned by a nested
+  // callback (setTimeout / .then bodies) run when that queue drains,
+  // never inline with the function body.
   for (const [name, fn] of functions) {
-    fn.body = steps.filter(s => s.line > fn.startLine && s.line <= fn.endLine && s.type !== 'function-decl' && s.type !== 'async-function-decl' && s.type !== 'block-start' && s.type !== 'block-end');
+    fn.body = steps.filter(s => {
+      if (!(s.line > fn.startLine && s.line <= fn.endLine)) return false;
+      if (s.type === 'function-decl' || s.type === 'async-function-decl' || s.type === 'block-start' || s.type === 'block-end') return false;
+      for (const owner of steps) {
+        if (!owner.bodyLines || owner === s) continue;
+        const [os, oe] = owner.bodyLines;
+        if (s.line >= os && s.line <= oe) return false;
+      }
+      return true;
+    });
   }
 
   return {
