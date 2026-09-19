@@ -8,12 +8,17 @@ import {
 } from '@/engine/runtimeEngine';
 import { defaultExample, examples } from '@/data/examples';
 
-export function useRuntimeState() {
+export function useRuntimeState(initialCode?: string) {
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot>(createInitialSnapshot);
   const [isRunning, setIsRunning] = useState(false);
   const [speed, setSpeed] = useState<Speed>(1);
-  const [code, setCode] = useState(defaultExample.code);
-  const [selectedExampleId, setSelectedExampleId] = useState(defaultExample.id);
+  const [code, setCode] = useState(initialCode ?? defaultExample.code);
+  const [selectedExampleId, setSelectedExampleId] = useState<string>(() => {
+    if (initialCode) {
+      return examples.find((e) => e.code === initialCode)?.id ?? '';
+    }
+    return defaultExample.id;
+  });
   const [mode, setMode] = useState<AppMode>('learning');
   const [reducedMotion, setReducedMotion] = useState(false);
   const [showPanels, setShowPanels] = useState({
@@ -116,6 +121,12 @@ export function useRuntimeState() {
     }
   }, []);
 
+  /** Load arbitrary code (deep links, interview launches) not in the examples list. */
+  const loadCustomCode = useCallback((newCode: string) => {
+    setSelectedExampleId('');
+    setCode(newCode);
+  }, []);
+
   const togglePanel = useCallback((key: keyof typeof showPanels) => {
     setShowPanels(prev => ({ ...prev, [key]: !prev[key] }));
   }, []);
@@ -158,6 +169,7 @@ export function useRuntimeState() {
     showPanels,
     togglePanel,
     selectExample,
+    loadCustomCode,
     run,
     pause,
     step,

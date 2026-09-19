@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import { examples } from '@/data/examples';
 import { Brain, Check, X, RotateCcw } from 'lucide-react';
+import { SubscribeCTA } from '@/components/SubscribeCTA/SubscribeCTA';
 
 interface InterviewModeProps {
-  onExit: () => void;
+  onExit?: () => void;
+  /** Render inline as page content instead of a fixed fullscreen overlay. */
+  embedded?: boolean;
 }
 
-export function InterviewMode({ onExit }: InterviewModeProps) {
+export function InterviewMode({ onExit, embedded = false }: InterviewModeProps) {
   const challenges = examples.filter(e => e.difficulty);
   const [selectedId, setSelectedId] = useState(challenges[0]?.id || '');
   const [userAnswer, setUserAnswer] = useState('');
@@ -32,7 +35,7 @@ export function InterviewMode({ onExit }: InterviewModeProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-40 bg-panel-bg/95 backdrop-blur-sm overflow-auto">
+    <div className={embedded ? 'overflow-auto' : 'fixed inset-0 z-40 bg-panel-bg/95 backdrop-blur-sm overflow-auto'}>
       <div className="max-w-3xl mx-auto p-6">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
@@ -40,9 +43,11 @@ export function InterviewMode({ onExit }: InterviewModeProps) {
             <Brain size={20} className="text-accent-violet" />
             <h2 className="text-lg font-bold text-gray-200">Interview Challenge Mode</h2>
           </div>
-          <button onClick={onExit} className="btn-default">
-            Exit
-          </button>
+          {onExit && (
+            <button onClick={onExit} className="btn-default">
+              Exit
+            </button>
+          )}
         </div>
 
         {/* Challenge selector */}
@@ -126,6 +131,9 @@ export function InterviewMode({ onExit }: InterviewModeProps) {
                     <p className="text-[12px] text-gray-300 leading-relaxed">{challenge.explanation}</p>
                   </div>
                 )}
+
+                {/* Post-session subscribe CTA (quiz finished). */}
+                <SubscribeCTA />
               </div>
             )}
           </div>

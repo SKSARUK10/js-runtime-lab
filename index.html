@@ -4,14 +4,36 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="theme-color" content="#0a0c10" />
+    <link rel="preconnect" href="https://plausible.io" crossorigin />
     <title>JS Runtime Lab — Event Loop Visualizer</title>
-    <meta name="description" content="Watch JavaScript execute one operation at a time. An interactive event loop and runtime visualizer." />
-    <meta property="og:image" content="https://bolt.new/static/og_default.png">
-    <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:image" content="https://bolt.new/static/og_default.png">
+    <meta name="description" content="Watch JavaScript execute one operation at a time. An interactive event loop and runtime visualizer for call stack, Web APIs, promises, and async/await." />
+    <!-- No static canonical here: react-helmet-async injects the correct
+         per-route canonical at runtime. A static one would conflict with it
+         on every route except / (Lighthouse "multiple conflicting URLs"). -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="JS Runtime Lab" />
+    <meta property="og:title" content="JS Runtime Lab — Event Loop Visualizer" />
+    <meta property="og:description" content="Watch JavaScript execute one operation at a time. An interactive event loop and runtime visualizer." />
+    <meta property="og:url" content="https://js-runtime-lab.netlify.app/" />
+    <meta property="og:image" content="https://js-runtime-lab.netlify.app/favicon.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="JS Runtime Lab — Event Loop Visualizer" />
+    <meta name="twitter:description" content="Watch JavaScript execute one operation at a time. An interactive event loop and runtime visualizer." />
+    <meta name="twitter:image" content="https://js-runtime-lab.netlify.app/favicon.svg" />
+    <!-- Per-route title/meta/canonical/JSON-LD are managed at runtime by
+         react-helmet-async via src/components/SEO/SEO.tsx. -->
+    <!-- AdSense loads lazily (requestIdleCallback) from src/components/AdSlot —
+         no ad script here, so first paint is never blocked. -->
 </head>
   <body>
     <div id="root"></div>
+    <!-- Static copy of the newsletter form for Netlify's form detection at
+         deploy time (the visible form renders client-side via React). -->
+    <form name="newsletter" data-netlify="true" data-netlify-honeypot="bot-field" hidden>
+      <input type="text" name="bot-field" />
+      <input type="email" name="email" />
+    </form>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
