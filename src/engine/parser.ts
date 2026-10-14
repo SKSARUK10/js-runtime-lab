@@ -12,6 +12,7 @@ export interface ParsedStep {
     | 'setTimeout'
     | 'setInterval'
     | 'clearTimeout'
+    | 'fetch'
     | 'promise.then'
     | 'promise.resolve'
     | 'queueMicrotask'
@@ -35,6 +36,8 @@ export interface ParsedStep {
   bodyLines?: number[];
   isNested?: boolean;
   parentFn?: string;
+  url?: string;
+  isAwaited?: boolean;
 }
 
 export interface ParsedFunction {
@@ -229,6 +232,46 @@ export function parseCode(code: string): ParseResult {
       continue;
     }
 
+    // await fetch("url") — bare or assigned; must precede variable-decl
+    match = line.match(/^(?:(?:const|let|var)\s+\w+\s*=\s*)?await\s+fetch\(\s*["'`]([^"'`]*)["'`]\s*\);?$/);
+    if (match) {
+      steps.push({ line: lineNum, type: 'fetch', url: match[1], isAwaited: true, parentFn: inFunction || undefined });
+      if (inFunction && functions.has(inFunction)) {
+        functions.get(inFunction)!.hasAwait = true;
+      }
+      continue;
+    }
+
+    // fetch("url").then((res) => { ... })
+    match = line.match(/\bfetch\(\s*["'`]([^"'`]*)["'`]\s*\)\.then\(\s*\([^)]*\)\s*=>\s*\{/);
+    if (match) {
+      let depth = 1;
+      let bodyEnd = lineNum;
+      for (let j = i + 1; j < lines.length && depth > 0; j++) {
+        for (const ch of lines[j]) {
+          if (ch === '{') depth++;
+          if (ch === '}') depth--;
+        }
+        if (depth <= 0) { bodyEnd = j + 1; break; }
+      }
+      steps.push({ line: lineNum, type: 'fetch', url: match[1], bodyLines: [lineNum + 1, bodyEnd - 1] });
+      continue;
+    }
+
+    // fetch("url").then((res) => expression);
+    match = line.match(/\bfetch\(\s*["'`]([^"'`]*)["'`]\s*\)\.then\(\s*\([^)]*\)\s*=>\s*(.+)\);?$/);
+    if (match) {
+      steps.push({ line: lineNum, type: 'fetch', url: match[1], arg: match[2] });
+      continue;
+    }
+
+    // fetch("url") — bare: Promise returned, no handler yet
+    match = line.match(/^fetch\(\s*["'`]([^"'`]*)["'`]\s*\);?$/);
+    if (match) {
+      steps.push({ line: lineNum, type: 'fetch', url: match[1] });
+      continue;
+    }
+
     // Promise.resolve().then(() => { ... })
     match = line.match(/Promise\.resolve\(\)\.then\(\s*\(\)\s*=>\s*\{/);
     if (match) {
@@ -252,8 +295,8 @@ export function parseCode(code: string): ParseResult {
       continue;
     }
 
-    // .then(() => { ... }) — chained
-    match = line.match(/^\.then\(\s*\(\)\s*=>\s*\{/);
+    // .then((res) => { ... }) — chained (params optional)
+    match = line.match(/^\.then\(\s*\([^)]*\)\s*=>\s*\{/);
     if (match) {
       let depth = 1;
       let bodyEnd = lineNum;

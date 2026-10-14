@@ -58,6 +58,7 @@ export interface WebApiEntry {
   taskType: TaskType;
   intervalId?: number;
   callbackId: string;
+  url?: string;
 }
 
 export interface TaskQueueEntry {
@@ -156,11 +157,14 @@ export type Speed = 0.25 | 0.5 | 1 | 2 | 5;
 
 export type AppMode = 'developer' | 'learning' | 'interview';
 
+export type ExampleCategory = 'macro' | 'micro' | 'network' | 'advanced';
+
 export interface Example {
   id: string;
   name: string;
   code: string;
   description: string;
+  category?: ExampleCategory;
   difficulty?: 'Easy' | 'Medium' | 'Hard' | 'Expert';
   expectedOutput?: string[];
   explanation?: string;

@@ -19,7 +19,7 @@ export function CodeEditor({ code, currentLine, onCodeChange }: CodeEditorProps)
           {lines.length} lines
         </span>
       </div>
-      <div className="flex flex-1 overflow-auto font-mono text-[13px] leading-[1.6]">
+      <div className="flex flex-1 overflow-auto font-mono text-[13px] leading-[21px]">
         {/* Line numbers + code */}
         <div className="flex-1 relative">
           {lines.map((line, idx) => {
@@ -34,7 +34,7 @@ export function CodeEditor({ code, currentLine, onCodeChange }: CodeEditorProps)
                 <span className="select-none text-right pr-3 pl-3 text-gray-600 w-12 flex-shrink-0 border-r border-panel-border">
                   {lineNum.toString().padStart(2, '0')}
                 </span>
-                <div className="pl-3 pr-3 flex-1 whitespace-pre">
+                <div className="pl-3 pr-3 flex-1 whitespace-pre-wrap [overflow-wrap:anywhere]">
                   {isActive && (
                     <span className="inline-block text-accent-blue mr-1 -ml-4 animate-pulse-glow">
                       <Play size={10} className="inline fill-accent-blue" />
@@ -56,7 +56,7 @@ export function CodeEditor({ code, currentLine, onCodeChange }: CodeEditorProps)
             value={code}
             onChange={(e) => onCodeChange(e.target.value)}
             spellCheck={false}
-            className="absolute inset-0 w-full h-full bg-transparent text-transparent caret-gray-300 resize-none outline-none pl-12 pr-3 pt-0 font-mono text-[13px] leading-[1.6] whitespace-pre"
+            className="absolute inset-0 w-full h-full bg-transparent text-transparent caret-gray-300 resize-none outline-none pl-[62px] pr-3 pt-0 font-mono text-[13px] leading-[21px] whitespace-pre-wrap [overflow-wrap:anywhere]"
             style={{ caretColor: '#c9d1d9' }}
           />
         </div>

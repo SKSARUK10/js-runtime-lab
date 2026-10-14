@@ -9,14 +9,14 @@ call stack, Web APIs, event loop, microtask/task queues, heap, console, and time
 
 - **Step-by-step simulation** — run, pause, single-step, and reset execution at your own pace
 - **Call stack + Event loop** — see frames pushed/popped and the loop checking microtasks before tasks
-- **Web APIs panel** — `setTimeout` / `setInterval` timers with live countdowns
+- **Web APIs panel** — `setTimeout` / `setInterval` timers with live countdowns, `fetch()` requests with simulated network latency
 - **Microtask vs Task queues** — `Promise.then`, `queueMicrotask`, `async/await` vs timer callbacks
 - **Console + Timeline** — ordered output and a chronological event log of everything that happened
 - **CPU & Memory visualizers** — simulated CPU load, heap objects (functions, promises, timers, closures)
 - **Profiler** — total runtime, tasks/microtasks executed, max stack depth, longest task, error count
 - **Explanations** — beginner-friendly narration of each step (Learning mode) or minimal UI (Dev mode)
 - **Interview mode** — quiz yourself on classic output-order questions
-- **13 curated examples** — `setTimeout` basics, Promise vs `setTimeout`, promise chains, `async/await`, closures, fetch simulation, DOM events, error handling, memory-leak demo, and more
+- **15 curated examples** — `setTimeout` basics, Promise vs `setTimeout`, promise chains, `async/await`, fetch (`.then` + `await`), closures, fetch simulation, DOM events, error handling, memory-leak demo, and more
 - **Custom code** — paste your own supported JS and visualize it instantly
 - **Keyboard shortcuts** — `Space` run/pause, `S` step, `R` reset, `1–5` playback speed
 
@@ -30,8 +30,9 @@ The engine uses a safe regex-based parser (no `eval`). Supported patterns:
 | Timers | `setTimeout(() => { ... }, 1000)` |
 | Intervals | `setInterval(() => { ... }, 1000)` |
 | Microtasks | `Promise.resolve().then(() => { ... })`, `queueMicrotask(() => { ... })` |
+| Networking | `fetch("/api")`, `fetch("/api").then(() => { ... })`, `await fetch("/api")` |
 | Functions | `function foo() { ... }`, `const foo = () => { ... }`, calls |
-| Async | `async function`, `await Promise.resolve()` |
+| Async | `async function`, `await Promise.resolve()`, `await fetch(...)` |
 | Errors | `throw new Error("...")` |
 | Variables | `const/let/var x = ...`, arrays |
 
@@ -109,7 +110,8 @@ src/
 
 ## Roadmap ideas
 
-- [ ] `fetch` / DOM-event Web API entries
+- [x] `fetch` Web API entries (network latency + promise → microtask)
+- [ ] DOM-event Web API entries
 - [ ] `clearTimeout` / `clearInterval` cancellation
 - [ ] Loop/conditional highlighting (`for`, `while`, `if`)
 - [ ] Shareable links (code encoded in URL)

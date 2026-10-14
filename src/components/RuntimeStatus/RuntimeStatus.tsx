@@ -47,7 +47,7 @@ export function RuntimeStatus({ snapshot }: RuntimeStatusProps) {
           {formatTime(snapshot.executionTime)}
         </span>
       </div>
-      <div className="flex-1 p-2 space-y-1 text-[11px]">
+      <div className="flex-1 p-2 space-y-0.5 text-[11px] overflow-y-auto min-h-0">
         {rows.map((row) => (
           <div key={row.label} className="flex items-center justify-between px-1 py-0.5 rounded hover:bg-panel-hover transition-colors">
             <span className="text-gray-500">{row.label}:</span>

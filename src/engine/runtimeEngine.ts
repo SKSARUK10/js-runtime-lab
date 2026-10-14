@@ -52,6 +52,23 @@ function getDirectBodySteps(allSteps: ParsedStep[], step: ParsedStep): ParsedSte
   });
 }
 
+// Simulated network latency for fetch() (ms of virtual time).
+const FETCH_LATENCY = 1500;
+
+// Callback body for a parsed step, with a fallback for expression-form
+// callbacks (e.g. fetch(url).then(() => console.log("x"))) whose body
+// lives on the owner line and therefore extracts empty.
+function resolveCallbackBodySteps(allSteps: ParsedStep[], step: ParsedStep): ParsedStep[] {
+  const body = getDirectBodySteps(allSteps, step);
+  if (body.length > 0 || !step.arg) return body;
+  const logMatch = step.arg.match(/^console\.(log|error|warn)\((.+)\);?$/);
+  if (logMatch) {
+    const type = logMatch[1] === 'error' ? 'console.error' : logMatch[1] === 'warn' ? 'console.warn' : 'console.log';
+    return [{ line: step.line, type, arg: logMatch[2] }];
+  }
+  return [{ line: step.line, type: 'expression', arg: step.arg }];
+}
+
 export interface SimStep {
   description: string;
   line: number | null;
@@ -59,6 +76,161 @@ export interface SimStep {
   category: 'sync' | 'webapi' | 'microtask' | 'task' | 'eventloop' | 'error' | 'memory';
   waitForTimer?: string; // webApiId to wait for
   waitDuration?: number; // simulated ms to wait
+}
+
+// ===== Helper: fetch() Web API steps =====
+// fetch() runs in the Web API layer (like timers), but its Promise resolves
+// into a MICROTASK (.then / await continuation), never the Task Queue.
+// Shared by top-level execution, function bodies, and callbacks.
+function generateFetchSteps(steps: SimStep[], parsedSteps: ParsedStep[], step: ParsedStep): void {
+  const url = step.url || '';
+  const hasThen = step.bodyLines !== undefined || Boolean(step.arg);
+  const thenSteps = hasThen ? resolveCallbackBodySteps(parsedSteps, step) : [];
+  const webApiId = uid('webapi');
+  const microtaskId = uid('mt');
+  const callbackId = uid('cb');
+  const heapId = uid('heap');
+
+  // 1. Request sent — fetch() enters the Web API layer
+  steps.push({
+    description: `fetch("${url}") — request sent`,
+    line: step.line,
+    category: 'webapi',
+    apply: (snap) => {
+      snap.currentLine = step.line;
+      const webApi: WebApiEntry = {
+        id: webApiId,
+        type: 'FETCH',
+        label: 'fetch()',
+        url,
+        delay: FETCH_LATENCY,
+        remaining: FETCH_LATENCY,
+        callbackLabel: hasThen ? '.then() callback' : '(no handler)',
+        sourceLine: step.line,
+        taskType: 'fetchCallback',
+        callbackId,
+      };
+      snap.webApis = [...snap.webApis, webApi];
+      snap.heap = [...snap.heap, {
+        id: heapId,
+        type: 'Promise',
+        label: 'fetch() Promise',
+        detail: 'state: pending',
+        sourceLine: step.line,
+        refCount: 1,
+      }];
+      snap.animations.push({
+        id: uid('anim'),
+        from: 'callstack',
+        to: 'webapi',
+        label: 'fetch() request',
+        category: 'webapi-register',
+        timestamp: snap.executionTime,
+      });
+      snap.timeline.push({
+        id: uid('tl'),
+        time: snap.executionTime,
+        label: `fetch("${url}") — request sent`,
+        category: 'webapi',
+        line: step.line,
+        relatedId: webApiId,
+      });
+      snap.explanations.push({
+        id: uid('exp'),
+        text: 'fetch() is a Web API. It starts the network request outside the Call Stack and immediately returns a pending Promise — JavaScript keeps running.',
+        line: step.line,
+        timestamp: snap.executionTime,
+      });
+    },
+  });
+
+  // 2. Network in flight
+  steps.push({
+    description: `Waiting for response... (${FETCH_LATENCY}ms network latency)`,
+    line: step.line,
+    category: 'webapi',
+    waitDuration: FETCH_LATENCY,
+    apply: (snap) => {
+      snap.state = 'WAITING_WEB_API';
+      snap.isWaitingForTimer = true;
+      snap.pendingTimerId = webApiId;
+      snap.explanations.push({
+        id: uid('exp'),
+        text: 'The request is in flight in the Web API layer. When the response arrives, the Promise fulfills and any .then() callbacks become microtasks.',
+        line: step.line,
+        timestamp: snap.executionTime,
+      });
+    },
+  });
+
+  // 3. Response received — Promise fulfills, .then becomes a microtask
+  steps.push({
+    description: hasThen
+      ? 'Response received — Promise fulfills, .then queued as microtask'
+      : 'Response received — Promise fulfills',
+    line: step.line,
+    category: 'webapi',
+    apply: (snap) => {
+      snap.webApis = snap.webApis.filter(w => w.id !== webApiId);
+      snap.isWaitingForTimer = false;
+      snap.pendingTimerId = null;
+      snap.heap = snap.heap.map(h =>
+        h.id === heapId ? { ...h, detail: 'state: fulfilled' } : h
+      );
+      if (hasThen) {
+        snap.microtaskQueue = [...snap.microtaskQueue, {
+          id: microtaskId,
+          type: 'Promise.then',
+          label: 'fetch().then()',
+          sourceLine: step.line,
+          callbackId,
+          createdAt: snap.executionTime,
+        }];
+        snap.animations.push({
+          id: uid('anim'),
+          from: 'webapi',
+          to: 'microtask',
+          label: 'Response → Microtask Queue',
+          category: 'microtask-queue',
+          timestamp: snap.executionTime,
+        });
+        snap.timeline.push({
+          id: uid('tl'),
+          time: snap.executionTime,
+          label: 'Response received — .then() queued as microtask',
+          category: 'microtask',
+          line: step.line,
+          relatedId: microtaskId,
+        });
+      } else {
+        snap.timeline.push({
+          id: uid('tl'),
+          time: snap.executionTime,
+          label: 'Response received',
+          category: 'webapi',
+          line: step.line,
+          relatedId: webApiId,
+        });
+      }
+      snap.explanations.push({
+        id: uid('exp'),
+        text: 'The response arrived and the Promise returned by fetch() fulfills. Its .then() callbacks are microtasks — they drain while the Call Stack is empty, before the next Task.',
+        line: step.line,
+        timestamp: snap.executionTime,
+      });
+    },
+  });
+
+  // Register the .then body for the microtask drain
+  if (hasThen) {
+    (steps as any)._pendingMicrotaskCallbacks = (steps as any)._pendingMicrotaskCallbacks || [];
+    (steps as any)._pendingMicrotaskCallbacks.push({
+      callbackId,
+      callbackSteps: thenSteps,
+      line: step.line,
+      microtaskId,
+    });
+  }
 }
 
 export function generateSimulation(code: string): { steps: SimStep[]; parseResult: ParseResult; supported: boolean } {
@@ -815,9 +987,14 @@ export function generateSimulation(code: string): { steps: SimStep[]; parseResul
         break;
       }
 
+      case 'fetch': {
+        generateFetchSteps(steps, parseResult.steps, step);
+        break;
+      }
+
       case 'promise.then': {
         const callbackId = uid('cb');
-        const callbackSteps = getCallbackBodySteps(step);
+        const callbackSteps = resolveCallbackBodySteps(parseResult.steps, step);
         const isChained = step.isNested;
         const microtaskId = uid('mt');
 
@@ -878,7 +1055,7 @@ export function generateSimulation(code: string): { steps: SimStep[]; parseResul
 
       case 'queueMicrotask': {
         const callbackId = uid('cb');
-        const callbackSteps = getCallbackBodySteps(step);
+        const callbackSteps = resolveCallbackBodySteps(parseResult.steps, step);
         const microtaskId = uid('mt');
 
         steps.push({
@@ -1332,7 +1509,7 @@ export function generateSimulation(code: string): { steps: SimStep[]; parseResul
 
     // After task: drain microtasks again
     // (For chained promises inside callbacks, we'd add them here)
-    const microtasksInCallback = task.callbackSteps.filter(s => s.type === 'promise.then' || s.type === 'queueMicrotask');
+    const microtasksInCallback = task.callbackSteps.filter(s => s.type === 'promise.then' || s.type === 'queueMicrotask' || s.type === 'fetch');
     if (microtasksInCallback.length > 0) {
       steps.push({
         description: 'Event Loop: drain microtasks after task',
@@ -1350,7 +1527,7 @@ export function generateSimulation(code: string): { steps: SimStep[]; parseResul
       });
 
       for (const mt of microtasksInCallback) {
-        const cbSteps = getCallbackBodySteps(mt);
+        const cbSteps = resolveCallbackBodySteps(parseResult.steps, mt);
         generateMicrotaskExecutionSteps(steps, cbSteps, mt.line, uid('mt'), uid('cb'));
       }
 
@@ -1525,6 +1702,171 @@ function generateAsyncFunctionCallSteps(
   // Execute body until await
   let hitAwait = false;
   for (const bodyStep of fn.body) {
+    // await fetch("url") — Web API network wait, then microtask continuation
+    if (bodyStep.type === 'fetch' && bodyStep.isAwaited) {
+      hitAwait = true;
+      const url = bodyStep.url || '';
+      const webApiId = uid('webapi');
+      const microtaskId = uid('mt');
+      const callbackId = uid('cb');
+      const heapId = uid('heap');
+
+      // fetch() called — request enters the Web API layer
+      steps.push({
+        description: `fetch("${url}") — request sent`,
+        line: bodyStep.line,
+        category: 'webapi',
+        apply: (snap) => {
+          snap.currentLine = bodyStep.line;
+          snap.webApis = [...snap.webApis, {
+            id: webApiId,
+            type: 'FETCH',
+            label: 'fetch()',
+            url,
+            delay: FETCH_LATENCY,
+            remaining: FETCH_LATENCY,
+            callbackLabel: `${fn.name}() continuation`,
+            sourceLine: bodyStep.line,
+            taskType: 'fetchCallback',
+            callbackId,
+          }];
+          snap.heap = [...snap.heap, {
+            id: heapId,
+            type: 'Promise',
+            label: 'fetch() Promise',
+            detail: 'state: pending',
+            sourceLine: bodyStep.line,
+            refCount: 1,
+          }];
+          snap.animations.push({
+            id: uid('anim'),
+            from: 'callstack',
+            to: 'webapi',
+            label: 'fetch() request',
+            category: 'webapi-register',
+            timestamp: snap.executionTime,
+          });
+          snap.timeline.push({
+            id: uid('tl'),
+            time: snap.executionTime,
+            label: `fetch("${url}") — request sent`,
+            category: 'webapi',
+            line: bodyStep.line,
+            relatedId: webApiId,
+          });
+          snap.explanations.push({
+            id: uid('exp'),
+            text: 'fetch() starts the network request outside the Call Stack and returns a pending Promise.',
+            line: bodyStep.line,
+            timestamp: snap.executionTime,
+          });
+        },
+      });
+
+      // await suspends the async function until the response arrives
+      steps.push({
+        description: `${fn.name}() suspended — awaiting response`,
+        line: bodyStep.line,
+        category: 'microtask',
+        apply: (snap) => {
+          snap.currentLine = bodyStep.line;
+          snap.callStack = snap.callStack.slice(0, -1);
+          snap.animations.push({
+            id: uid('anim'),
+            from: 'callstack',
+            to: 'code',
+            label: `${fn.name}() suspended`,
+            category: 'pop',
+            timestamp: snap.executionTime,
+          });
+          snap.timeline.push({
+            id: uid('tl'),
+            time: snap.executionTime,
+            label: 'await fetch() — function suspended',
+            category: 'microtask',
+            line: bodyStep.line,
+          });
+          snap.explanations.push({
+            id: uid('exp'),
+            text: 'await suspends the async function: its frame leaves the Call Stack and the rest of the function becomes a continuation. The continuation runs as a microtask once the response arrives.',
+            line: bodyStep.line,
+            timestamp: snap.executionTime,
+          });
+        },
+      });
+
+      // Network in flight
+      steps.push({
+        description: `Waiting for response... (${FETCH_LATENCY}ms network latency)`,
+        line: bodyStep.line,
+        category: 'webapi',
+        waitDuration: FETCH_LATENCY,
+        apply: (snap) => {
+          snap.state = 'WAITING_WEB_API';
+          snap.isWaitingForTimer = true;
+          snap.pendingTimerId = webApiId;
+        },
+      });
+
+      // Response arrives — continuation is queued as a microtask
+      steps.push({
+        description: 'Response received — continuation queued as microtask',
+        line: bodyStep.line,
+        category: 'webapi',
+        apply: (snap) => {
+          snap.webApis = snap.webApis.filter(w => w.id !== webApiId);
+          snap.isWaitingForTimer = false;
+          snap.pendingTimerId = null;
+          snap.heap = snap.heap.map(h =>
+            h.id === heapId ? { ...h, detail: 'state: fulfilled' } : h
+          );
+          snap.microtaskQueue = [...snap.microtaskQueue, {
+            id: microtaskId,
+            type: 'Promise.then',
+            label: `${fn.name}() continuation`,
+            sourceLine: bodyStep.line,
+            callbackId,
+            createdAt: snap.executionTime,
+          }];
+          snap.animations.push({
+            id: uid('anim'),
+            from: 'webapi',
+            to: 'microtask',
+            label: 'Response → Microtask Queue',
+            category: 'microtask-queue',
+            timestamp: snap.executionTime,
+          });
+          snap.timeline.push({
+            id: uid('tl'),
+            time: snap.executionTime,
+            label: 'Response received — continuation queued',
+            category: 'microtask',
+            line: bodyStep.line,
+            relatedId: microtaskId,
+          });
+          snap.explanations.push({
+            id: uid('exp'),
+            text: 'The Promise fulfills. Code after await runs as a microtask — before the next Task, while the Call Stack is empty.',
+            line: bodyStep.line,
+            timestamp: snap.executionTime,
+          });
+        },
+      });
+
+      // Store continuation steps for the microtask drain
+      const continuationSteps = fn.body.filter(s => s.line > bodyStep.line && s.type !== 'block-end');
+      (steps as any)._pendingMicrotaskCallbacks = (steps as any)._pendingMicrotaskCallbacks || [];
+      (steps as any)._pendingMicrotaskCallbacks.push({
+        callbackId,
+        callbackSteps: continuationSteps,
+        line: bodyStep.line,
+        microtaskId,
+        isAsyncContinuation: true,
+        fnName: fn.name,
+      });
+      break;
+    }
+
     if (bodyStep.type === 'await') {
       hitAwait = true;
       // Handle await
@@ -2032,6 +2374,11 @@ function generateBodyStepSteps(
           },
         });
       }
+      break;
+    }
+
+    case 'fetch': {
+      generateFetchSteps(steps, activeSteps, bodyStep);
       break;
     }
 

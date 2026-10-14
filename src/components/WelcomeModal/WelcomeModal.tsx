@@ -43,8 +43,8 @@ export function WelcomeModal({ onStart }: WelcomeModalProps) {
               <div className="text-[11px] text-gray-400">Auto-advance through the simulation</div>
             </div>
             <div className="px-3 py-2 rounded bg-panel-surface border border-panel-border">
-              <div className="text-[10px] uppercase tracking-wider text-accent-violet mb-0.5">10 Examples</div>
-              <div className="text-[11px] text-gray-400">From basic setTimeout to async/await</div>
+              <div className="text-[10px] uppercase tracking-wider text-accent-violet mb-0.5">15 Examples</div>
+              <div className="text-[11px] text-gray-400">From basic setTimeout to fetch</div>
             </div>
             <div className="px-3 py-2 rounded bg-panel-surface border border-panel-border">
               <div className="text-[10px] uppercase tracking-wider text-accent-amber mb-0.5">Interview Mode</div>

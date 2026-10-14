@@ -80,6 +80,11 @@ export function WebAPIs({ webApis, isWaiting, pendingTimerId }: WebAPIsProps) {
                 <div className="text-[10px] text-gray-600 mt-1.5">
                   callback: {api.callbackLabel}
                 </div>
+                {api.url && (
+                  <div className="text-[10px] text-gray-600 mt-0.5 font-mono truncate">
+                    GET {api.url}
+                  </div>
+                )}
                 {api.sourceLine && (
                   <div className="text-[9px] text-gray-700">
                     line {api.sourceLine}

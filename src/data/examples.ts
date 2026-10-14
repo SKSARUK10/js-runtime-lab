@@ -3,6 +3,7 @@ import type { Example } from '@/types/runtime';
 export const examples: Example[] = [
   {
     id: 'basic-setTimeout',
+    category: 'macro',
     name: 'Basic setTimeout',
     code: `console.log("Start");
 
@@ -17,6 +18,7 @@ console.log("End");`,
   },
   {
     id: 'promise-vs-setTimeout',
+    category: 'micro',
     name: 'Promise vs setTimeout',
     code: `console.log("A");
 
@@ -35,6 +37,7 @@ console.log("D");`,
   },
   {
     id: 'nested-setTimeout',
+    category: 'macro',
     name: 'Nested setTimeout',
     code: `console.log("Start");
 
@@ -51,6 +54,7 @@ console.log("End");`,
   },
   {
     id: 'multiple-timers',
+    category: 'macro',
     name: 'Multiple timers',
     code: `console.log("Begin");
 
@@ -72,6 +76,7 @@ console.log("Done");`,
   },
   {
     id: 'promise-chain',
+    category: 'micro',
     name: 'Promise chain',
     code: `Promise.resolve()
   .then(() => {
@@ -91,6 +96,7 @@ console.log("Sync done");`,
   },
   {
     id: 'fetch-simulation',
+    category: 'network',
     name: 'fetch simulation',
     code: `console.log("Request start");
 
@@ -110,6 +116,7 @@ console.log("Request sent");`,
   },
   {
     id: 'dom-event',
+    category: 'macro',
     name: 'DOM event',
     code: `console.log("Page loaded");
 
@@ -129,6 +136,7 @@ console.log("Listener attached");`,
   },
   {
     id: 'closure-setTimeout',
+    category: 'advanced',
     name: 'Closure + setTimeout',
     code: `function createCounter() {
   let count = 0;
@@ -153,6 +161,7 @@ console.log("Counter created");`,
   },
   {
     id: 'async-await',
+    category: 'micro',
     name: 'async/await',
     code: `async function test() {
   console.log("A");
@@ -169,6 +178,7 @@ console.log("C");`,
   },
   {
     id: 'setTimeout-promise-microtask',
+    category: 'micro',
     name: 'setTimeout + Promise + queueMicrotask',
     code: `console.log("1");
 
@@ -192,6 +202,7 @@ console.log("5");`,
   },
   {
     id: 'error-simulation',
+    category: 'advanced',
     name: 'Error simulation',
     code: `console.log("Before error");
 
@@ -208,6 +219,7 @@ console.log("After error");`,
   },
   {
     id: 'memory-leak',
+    category: 'advanced',
     name: 'Memory leak demo',
     code: `let leakedData = [];
 
@@ -223,6 +235,7 @@ console.log("Interval started");`,
   },
   {
     id: 'interview-challenge',
+    category: 'advanced',
     name: 'Interview Challenge',
     code: `console.log("1");
 
@@ -243,6 +256,37 @@ console.log("5");`,
     expectedOutput: ['1', '5', '3', '4', '2'],
     difficulty: 'Medium',
     explanation: 'Sync logs first (1, 5). Then all microtasks drain (3, 4). Then the first task runs (2).',
+  },
+  {
+    id: 'fetch-then',
+    name: 'fetch + .then (Web API)',
+    category: 'network',
+    code: `console.log("Start");
+
+fetch("/api/users").then(() => {
+  console.log("Response received");
+});
+
+console.log("End");`,
+    description: 'fetch() is a networking Web API. The response Promise resolves into a microtask, not a task.',
+    expectedOutput: ['Start', 'End', 'Response received'],
+    explanation: 'fetch() sends the request in the Web API layer and immediately returns a Promise, so synchronous code (Start, End) runs first. When the response arrives, the Promise fulfills and the .then() callback drains as a microtask.',
+  },
+  {
+    id: 'fetch-await',
+    name: 'await fetch (Web API)',
+    category: 'network',
+    code: `async function loadUser() {
+  console.log("Fetching user...");
+  await fetch("/api/user");
+  console.log("User loaded");
+}
+
+loadUser();
+console.log("Script done");`,
+    description: 'await fetch() suspends the async function. The continuation runs as a microtask after the response.',
+    expectedOutput: ['Fetching user...', 'Script done', 'User loaded'],
+    explanation: 'loadUser() runs synchronously until await fetch(), where it suspends. The network request runs in the Web API layer. Once the response arrives, the continuation (console.log("User loaded")) is queued as a microtask — after the synchronous "Script done".',
   },
 ];
 

@@ -40,6 +40,14 @@ import {
   Settings,
 } from 'lucide-react';
 
+// Dropdown grouping for the example selector.
+const EXAMPLE_GROUPS = [
+  { key: 'macro', label: 'Macro Tasks — setTimeout / setInterval' },
+  { key: 'micro', label: 'Micro Tasks — Promise / queueMicrotask / async-await' },
+  { key: 'network', label: 'Networking — fetch Web API' },
+  { key: 'advanced', label: 'Advanced — closures / errors / interview' },
+] as const;
+
 export interface LabPageProps {
   /** Code to load on mount instead of the default example. */
   initialCode?: string;
@@ -286,9 +294,17 @@ export default function LabPage({ initialCode, seo, startWithWelcome = true }: L
             className="appearance-none bg-[#141821] border border-[#1e2433] text-[11px] text-gray-300 rounded px-2 py-1.5 pr-7 outline-none hover:border-gray-600 cursor-pointer"
           >
             {rt.selectedExampleId === '' && <option value="">Linked code</option>}
-            {examples.map((ex) => (
-              <option key={ex.id} value={ex.id}>{ex.name}</option>
-            ))}
+            {EXAMPLE_GROUPS.map((group) => {
+              const items = examples.filter((ex) => (ex.category ?? 'macro') === group.key);
+              if (items.length === 0) return null;
+              return (
+                <optgroup key={group.key} label={group.label}>
+                  {items.map((ex) => (
+                    <option key={ex.id} value={ex.id}>{ex.name}</option>
+                  ))}
+                </optgroup>
+              );
+            })}
           </select>
           <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
         </div>
@@ -305,7 +321,7 @@ export default function LabPage({ initialCode, seo, startWithWelcome = true }: L
               onCodeChange={rt.setCode}
             />
           </div>
-          <div className="h-[200px] flex-shrink-0">
+          <div className="flex-shrink-0">
             <RuntimeStatus snapshot={snapshot} />
           </div>
         </div>
